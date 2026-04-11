@@ -61,7 +61,7 @@ docker run -d --name geo-gateway -p 8000:8000 --env-file .env geo-gateway
 
 Abra no navegador: [http://localhost:8000/docs](http://localhost:8000/docs)
 
-Use o botão **"Authorize"** para informar o JWT (formato `Bearer <token>`).
+A autenticação é automática: basta executar o `POST /token` com um email de teste e todos os endpoints seguintes já estarão autenticados (sem precisar clicar em nenhum botão).
 
 ### 5. Parar o container
 
@@ -184,9 +184,9 @@ Deve exibir: _"Uvicorn running on http://0.0.0.0:8000"_
 
 Abra no navegador: [http://localhost:8000/docs](http://localhost:8000/docs)
 
-### 5 — Gerar um JWT de teste
+### 5 — Autenticar (automático via Swagger)
 
-O endpoint `POST /token` gera um JWT válido do Clerk a partir do email de um usuário já cadastrado. **Não requer senha.**
+O Swagger possui **autenticação automática** — não há botão "Authorize". Basta executar o `POST /token` e o token é capturado e injetado em todas as requisições seguintes.
 
 **Usuários de teste disponíveis:**
 
@@ -195,18 +195,30 @@ O endpoint `POST /token` gera um JWT válido do Clerk a partir do email de um us
 | `teste@teste.com` | Usuário de teste principal |
 | `usuario@teste.com` | Segundo usuário (para testar isolamento de dados) |
 
-#### Via Swagger
+#### Como autenticar
 
 1. Abra [http://localhost:8000/docs](http://localhost:8000/docs)
-2. Clique em **POST /token** → **Try it out**
+2. Expanda **POST /token** → clique **Try it out**
 3. Preencha o body:
    ```json
    { "email": "teste@teste.com" }
    ```
 4. Clique **Execute**
-5. Copie o valor do campo `token` da resposta
+5. Pronto! O badge no canto superior direito ficará **🔓 verde** indicando que você está autenticado
 
-#### Via curl
+O Swagger passará a enviar o `Authorization: Bearer <token>` automaticamente em todas as requisições.
+
+#### Badge de status
+
+| Badge | Significado |
+|---|---|
+| 🔒 Vermelho | Não autenticado — execute `POST /token` |
+| 🔓 Verde | Autenticado — token válido por 60 s |
+| ⏳ Amarelo | Token expirando em 10 s — gere um novo |
+
+> **Importante:** o JWT tem validade de **60 segundos**. Quando o badge ficar amarelo ou vermelho, execute `POST /token` novamente.
+
+#### Via curl (alternativa)
 
 ```bash
 curl -s -X POST http://localhost:8000/token \
@@ -222,27 +234,19 @@ Resposta:
 }
 ```
 
-> **Importante:** o JWT tem validade de **60 segundos**. Gere um novo token antes de cada sequência de testes.
+### 6 — Testar os endpoints
 
-### 6 — Autenticar no Swagger
+> Certifique-se de que o badge está **🔓 verde** antes de testar. Se estiver vermelho, execute `POST /token` novamente.
 
-1. No Swagger ([http://localhost:8000/docs](http://localhost:8000/docs)), clique no botão **"Authorize"** 🔓
-2. No campo **Value**, cole o token (somente o JWT, sem a palavra `Bearer`)
-3. Clique **Authorize** e depois **Close**
-
-Agora todos os endpoints estarão autenticados.
-
-### 7 — Testar os endpoints
-
-#### 7.1 — Criar um cliente
+#### 6.1 — Criar um cliente
 
 **POST /api/customers**
+
+O Swagger exibirá um formulário com os campos `name` e `address`. O `userId` é injetado automaticamente a partir do token JWT.
 
 ```json
 {
   "name": "João Silva",
-  "email": "joao@exemplo.com",
-  "phone": "21999999999",
   "address": "Rua Marquês de São Vicente 225, Rio de Janeiro"
 }
 ```
@@ -262,60 +266,48 @@ Resposta esperada — **201 Created**:
 }
 ```
 
-> Note que `lat` e `lng` são preenchidos automaticamente via geocodificação (Nominatim).
+> Note que `lat` e `lng` são preenchidos automaticamente via geocodificação (Nominatim). O campo `userId` é extraído do JWT — não precisa ser informado.
 
-#### 7.2 — Listar clientes
+#### 6.2 — Listar clientes
 
 **GET /api/customers**
 
 Retorna **200 OK** com um array dos clientes do usuário autenticado.
 
-#### 7.3 — Buscar por ID
+#### 6.3 — Buscar por ID
 
 **GET /api/customers/{id}**
 
 Use o `id` retornado na criação.
 
-#### 7.4 — Atualizar cliente
+#### 6.4 — Atualizar cliente
 
 **PUT /api/customers/{id}**
 
 ```json
 {
   "name": "João da Silva",
-  "email": "joao.novo@exemplo.com",
-  "phone": "21988888888",
   "address": "Av. Brasil 1000, Rio de Janeiro"
 }
 ```
 
-#### 7.5 — Remover cliente
+#### 6.5 — Remover cliente
 
 **DELETE /api/customers/{id}**
 
 Retorna **204 No Content**.
 
-### 8 — Testar isolamento de dados por usuário
+### 7 — Testar isolamento de dados por usuário
 
 Para verificar se um usuário só vê seus próprios clientes:
 
-1. Gere um token com o **primeiro** usuário:
-   ```bash
-   curl -s -X POST http://localhost:8000/token \
-     -H "Content-Type: application/json" \
-     -d '{"email": "teste@teste.com"}'
-   ```
-2. Crie um cliente usando esse token
-3. Gere um token com o **segundo** usuário:
-   ```bash
-   curl -s -X POST http://localhost:8000/token \
-     -H "Content-Type: application/json" \
-     -d '{"email": "usuario@teste.com"}'
-   ```
-4. Liste os clientes (`GET /api/customers`) usando o segundo token
-5. O resultado deve ser um **array vazio** `[]` — o segundo usuário não vê os clientes do primeiro.
+1. No Swagger, execute `POST /token` com `{"email": "teste@teste.com"}` (badge fica 🔓 verde)
+2. Crie um cliente via `POST /api/customers`
+3. Execute `POST /token` novamente com `{"email": "usuario@teste.com"}` (troca de usuário automática)
+4. Execute `GET /api/customers`
+5. O resultado deve ser um **array vazio** `[]` — o segundo usuário não vê os clientes do primeiro
 
-### 9 — Testar sem autenticação
+### 8 — Testar sem autenticação
 
 Verifique que as rotas protegidas rejeitam requisições sem JWT:
 
@@ -326,10 +318,10 @@ curl -s -w "\nHTTP: %{http_code}\n" http://localhost:8000/api/customers
 Resposta esperada — **401 Unauthorized**:
 
 ```json
-{"detail": "Token não informado"}
+{"detail": "Token ausente"}
 ```
 
-### 10 — Parar e remover os containers
+### 9 — Parar e remover os containers
 
 ```bash
 docker stop geo-gateway customers-api
